@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blue Turtle Defense</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- SCREEN: Main Menu -->
+    <div id="screen-menu" class="screen active">
+      <div class="menu-box">
+        <h1>Blue Turtle Defense</h1>
+        <p class="subtitle">Build. Train. Defend.</p>
+        <button id="btn-start">Start Game</button>
+        <button id="btn-how-to-play">How to Play</button>
+      </div>
+    </div>
+
+    <!-- SCREEN: How to Play -->
+    <div id="screen-howto" class="screen">
+      <div class="howto-box">
+        <h2>How to Play</h2>
+        <ul>
+          <li><strong>Build</strong> — Select a building from the Build tab and click a green tile to place it.</li>
+          <li><strong>Towers</strong> — Arrow Towers auto-attack nearby enemies. Upgrade them with the Tech tab.</li>
+          <li><strong>Barracks</strong> — Trains infantry. Pick weapons, shields, and armor from the Units tab.</li>
+          <li><strong>Train Units</strong> — Click a Barracks on the map, tune the infantry loadout, then queue soldiers.</li>
+          <li><strong>Tech Tree</strong> — Research upgrades in the Tech tab to strengthen your forces.</li>
+          <li><strong>Wave Rewards</strong> — Each cleared wave offers 3 unlocks. Pick 1 before starting the next attack.</li>
+          <li><strong>Economy</strong> — Gold Mines generate gold. Houses increase your population cap. Enemies also drop gold on death.</li>
+          <li><strong>Waves</strong> — Enemies attack from the edges in escalating waves. Survive all waves to win!</li>
+          <li><strong>Defend</strong> — If the Fortress reaches 0 HP, you lose.</li>
+        </ul>
+        <button id="btn-back-menu">Back</button>
+      </div>
+    </div>
+
+    <!-- SCREEN: Game -->
+    <div id="screen-game" class="screen">
+      <!-- HUD Top Bar -->
+      <div id="hud-top">
+        <div id="res-display">
+          <span class="res-item" id="res-gold">&#9733; Gold: <b id="val-gold">200</b></span>
+          <span class="res-item" id="res-pop">&#9829; Pop: <b id="val-pop">0</b> / <b id="val-pop-cap">20</b></span>
+        </div>
+        <div id="wave-display">
+          <span id="wave-label">Wave <b id="val-wave">0</b></span>
+          <span id="wave-status">Preparing...</span>
+          <span id="fortress-hp">Fortress: <b id="val-fortress-hp">500</b></span>
+        </div>
+        <div id="hud-buttons">
+          <button id="btn-next-wave" disabled>Next Wave</button>
+          <button id="btn-pause">Pause</button>
+          <button id="btn-fullscreen">Fullscreen</button>
+        </div>
+      </div>
+
+      <!-- Game Canvas -->
+      <canvas id="game-canvas"></canvas>
+      <div id="minimap-panel">
+        <div id="minimap-header">
+          <span>Map</span>
+          <span id="minimap-hint">Click to snap</span>
+        </div>
+        <canvas id="minimap-canvas" width="180" height="180" aria-label="Minimap"></canvas>
+      </div>
+
+      <!-- Right Sidebar -->
+      <div id="sidebar">
+        <div id="tab-bar">
+          <button class="tab-btn active" data-tab="build">Build</button>
+          <button class="tab-btn" data-tab="units">Units</button>
+          <button class="tab-btn" data-tab="tech">Tech</button>
+        </div>
+
+        <!-- Build Tab -->
+        <div id="tab-build" class="tab-content active">
+          <h3>Buildings</h3>
+          <div id="build-list"></div>
+        </div>
+
+        <!-- Units Tab -->
+        <div id="tab-units" class="tab-content">
+          <div id="units-panel">
+            <p class="hint">Select a production building on the map to train units.</p>
+          </div>
+        </div>
+
+        <!-- Tech Tab -->
+        <div id="tab-tech" class="tab-content">
+          <div id="tech-panel"></div>
+        </div>
+      </div>
+
+      <!-- Bottom Info Bar -->
+      <div id="info-bar">
+        <div id="selected-info">Click a tile or building to inspect it.</div>
+        <div id="selected-actions"></div>
+      </div>
+
+      <div id="wave-reward-overlay">
+        <div id="wave-reward-panel"></div>
+      </div>
+
+      <div id="fortress-overlay">
+        <div id="fortress-panel">
+          <button id="btn-close-fortress" aria-label="Close fortress panel">Close</button>
+          <div id="fortress-panel-body"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCREEN: Game Over -->
+    <div id="screen-gameover" class="screen">
+      <div class="gameover-box">
+        <h2 id="gameover-title">Defeat</h2>
+        <p id="gameover-msg"></p>
+        <button id="btn-restart">Play Again</button>
+        <button id="btn-menu">Main Menu</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

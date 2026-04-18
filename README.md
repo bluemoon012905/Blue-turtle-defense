@@ -1,349 +1,338 @@
-# Blue-turtle-defense
-Tower defense browser game 
+# Blue Turtle Defense
+
+A statically hosted PvE real-time strategy tower-defense game. Build a base, train armies, research technology, and defend your Fortress against 10 escalating enemy waves.
+
+No build step. No dependencies. Open `index.html` in a browser.
+
+---
+
+## Quick Start
+
+```bash
+# Clone and open — that's it
+git clone <repo>
+cd Blue-turtle-defense
+open index.html   # or serve with any static file server
+```
+
+For GitHub Pages: push to `main` and enable Pages from the repo settings. The `.nojekyll` file is already present.
+
+Local dev with a file server (avoids ES module CORS issues in some browsers):
+```bash
+npx serve .
+# or
+python3 -m http.server 8080
+```
+
+---
+
+## Project Structure
+
+```
+Blue-turtle-defense/
+├── index.html              # Game shell, all screens, UI markup
+├── css/
+│   └── style.css           # All styles (dark theme, layout, UI components)
+└── js/
+    ├── main.js             # Entry point — game loop, event wiring, screen transitions
+    ├── data/               # Static content definitions (edit to balance/add content)
+    │   ├── buildings.js    # BuildingDefinition — all structures
+    │   ├── soldiers.js     # BASE_SOLDIER + EquipmentDefinition
+    │   ├── tech.js         # TechNodeDefinition + category display order
+    │   ├── towers.js       # TowerDefinition — shared ranged-defense base stats
+    │   └── enemies.js      # EnemyDefinition + WAVE_DEFINITIONS (10 waves)
+    ├── systems/            # Core runtime systems
+    │   ├── gameState.js    # Singleton state — single source of truth
+    │   ├── decoder.js      # Reads defs + state → computes runtime configs
+    │   └── factory.js      # Creates entity instances from decoded configs
+    ├── game/               # Game logic
+    │   ├── map.js          # GameMap class — tile grid, placement, walkability
+    │   ├── pathfinding.js  # A* — finds pixel-waypoint paths on the tile grid
+    │   ├── combat.js       # All per-tick AI: enemies, units, towers, projectiles, queues
+    │   ├── waves.js        # WaveController — spawning and wave lifecycle
+    │   └── renderer.js     # Canvas renderer — draws everything each frame
+    └── ui/
+        └── panels.js       # HUD, build panel, units tab, tech tab, info bar, fortress overlay
+```
+
+### Dependency flow (no circular imports)
+
+```
+data/*  ──→  systems/gameState
+        ──→  systems/decoder   (reads data + gameState)
+        ──→  systems/factory   (reads data + gameState)
+        ──→  game/*            (reads data + systems)
+        ──→  ui/panels         (reads data + systems)
+        ──→  main.js           (imports everything)
+```
+
+---
+
+## Architecture: Factory + Decoder
+
+Content is defined as plain data objects. The **Decoder** reads those objects plus current game state to produce a runtime config. The **Factory** turns that config into a live entity.
+
+```
+Data definition  →  Decoder  →  Runtime config  →  Factory  →  Entity instance
+```
+
+**Example — training a soldier:**
+1. Player selects a barracks loadout: weapon, optional shield, optional armor
+2. `decodeUnit(branch, equipmentIds)` sums base stats + loadout stats + tech bonuses → config
+3. Config is pushed onto a building's `productionQueue`
+4. When the timer fires, an inline unit spawn in `combat.js` creates the live unit object
+
+**Example — ranged-defense shooting:**
+1. A tower or fortress instance has a `chosenUpgrades` array of tech node ids
+2. `decodeTower(towerInstance, TOWER_DEFINITION, TECH_TREE)` reads the instance stats cache and adds upgrade bonuses → runtime stats
+3. `updateTowers(dt)` in `combat.js` uses those stats each tick for any building with `towerStats`
+
+---
+
+## Game State
+
+`js/systems/gameState.js` is a singleton object. Everything mutable lives here.
+
+| Field | Type | Description |
+|---|---|---|
+| `resources` | `{gold}` | Current currency amount |
+| `popCap` | number | Max population (base 20, +10 per House) |
+| `currentWave` | number | Wave number (1-indexed) |
+| `wavePhase` | string | `'prep'` \| `'active'` \| `'victory'` \| `'defeat'` |
+| `buildings` | array | All placed building instances |
+| `units` | array | All live friendly unit instances |
+| `enemies` | array | All live enemy instances |
+| `projectiles` | array | In-flight projectile instances |
+| `globalUnlocks` | Set\<string\> | Reserved for global build or tech flags |
+| `researchedTech` | Set\<string\> | Completed tech node ids |
+| `unlockedEquipment` | Set\<string\> | Equipment ids currently available in barracks loadouts |
+| `branchBonuses` | object | Cumulative infantry stat bonuses from tech |
+| `researchQueue` | array | `[{nodeId, timeRemaining}]` — sequential queue |
+| `map` | GameMap | Set on `initGame()` |
+| `selected` | object | `{type:'building'|'tile', ref?}` |
+| `buildSelection` | string\|null | Currently selected building def id |
+| `waveRewardDraft` | object\|null | Current post-wave prompt `{ choices: [equipmentIds...] }` |
+| `paused` | bool | Pauses all `tick()` logic |
+
+Notes:
+- The fortress is a non-placeable HQ building with ranged attacks, per-instance tower upgrades, and a repair action.
+- `selected` drives both the bottom info bar and the fortress detail overlay when the HQ is clicked.
+
+---
+
+## Data Reference
+
+### Adding a building (`js/data/buildings.js`)
+
+```js
+my_building: {
+  id: 'my_building',
+  name: 'Display Name',
+  cost: { gold: 100, wood: 50 },   // omit a key to mean 0
+  maxHp: 150,
+  size: 2,                          // occupies size×size tiles
+  color: '#rrggbb',                 // canvas fill color
+  placeable: true,                  // shows in build panel
+  requiresUnlock: 'some_flag',      // optional — gates behind globalUnlock
+  upgrades: [],                     // optional per-building upgrade tech ids
+  rangedDefense: false,             // optional metadata for shared ranged-defense buildings
+  repairCostPerHp: 0.25,            // optional, used by repair-capable buildings
+  generates: { gold: 1.0 },         // resources/second
+  popCapBonus: 0,                   // added to state.popCap when placed
+  producesUnits: false,
+  trainableUnits: [],               // usually ['infantry'] for barracks
+  description: 'Shown in build panel',
+},
+```
+
+Then add its id to `BUILD_ORDER` to show it in the panel.
+
+### Adding equipment (`js/data/soldiers.js`)
+
+```js
+my_weapon: {
+  id: 'my_weapon', name: 'My Weapon',
+  type: 'weapon',           // 'weapon' | 'shield' | 'armor'
+  branch: 'infantry',
+  hands: 1,                 // weapons only: 1 or 2
+  weaponClass: 'melee',     // weapons only: 'melee' | 'ranged'
+  attackType: 'melee',      // weapons only: 'melee' | 'pierce'
+  statMods: { damage: 8, speed: -5 },  // keys match BASE_SOLDIER fields
+  costMods: { gold: 20 },              // added to unit cost
+  timeMods: { trainTime: 1 },          // added to train time
+  description: 'Shown in units tab',
+},
+```
+
+Notes:
+- One-handed melee weapons may be paired with a shield.
+- Two-handed melee and all ranged weapons cannot use shields.
+- Armor uses split values: `meleeArmor/pierceArmor`. Example: medium anti-range armor is `0/4`.
+- Wave rewards add new equipment ids to `state.unlockedEquipment`.
+
+### Adding a tech node (`js/data/tech.js`)
+
+```js
+my_tech: {
+  id: 'my_tech', name: 'My Tech', category: 'infantry',
+  cost: { gold: 150 }, researchTime: 25,
+  prerequisites: ['infantry_tier1'],  // must be researched first
+  effects: [
+    { type: 'branch_stat', branch: 'infantry', stat: 'damage', value: 5 },
+  ],
+  unlocks: ['my_weapon'],   // optional equipment ids to unlock on completion
+  description: 'Shown in tech panel',
+},
+```
+
+Effect types: `'branch_stat'` (adds to `state.branchBonuses`), `'tower_upgrade'` (per-tower, handled by decoder).
+
+Add the node id to the relevant array in `TECH_CATEGORIES` to display it.
+
+### Adding an enemy (`js/data/enemies.js`)
+
+```js
+skeleton: {
+  id: 'skeleton', name: 'Skeleton',
+  hp: 80, damage: 8, armor: 1,
+  speed: 55, attackSpeed: 1.0,
+  reward: { gold: 12 },
+  color: '#ECEFF1', size: 11,
+  attackRange: 1,
+  attackType: 'melee',      // optional, defaults to melee
+},
+```
+
+Then reference it by id in `WAVE_DEFINITIONS`.
+
+### Editing waves (`js/data/enemies.js`)
+
+Each wave is an array of spawn groups:
+```js
+[
+  { enemy: 'goblin',  count: 10, interval: 1.0, startTime: 2  },
+  //                                             ^ seconds into wave before first spawn
+  //                              ^ seconds between spawns
+  { enemy: 'troll',   count: 2,  interval: 15,  startTime: 30 },
+]
+```
+
+After the 10 defined waves, `waves.js` auto-generates procedurally scaled waves.
+
+---
+
+## Key Systems
+
+### Map & placement (`js/game/map.js`)
+
+- `map.canPlace(tx, ty, size)` — returns true if all tiles in the footprint are empty
+- `map.markOccupied(tx, ty, size)` — marks tiles and sets `walkable[ty][tx] = false`
+- `map.markEmpty(tx, ty, size)` — reverses the above (used on sell)
+- After any placement/removal, call `rePathAllEnemies()` from `combat.js`
 
-General Description
+### Pathfinding (`js/game/pathfinding.js`)
 
-This project is a statically hosted real-time strategy survival game inspired by the control style and presentation of classic RTS titles such as Age of Empires. The game uses a similar top-down or isometric point of view and familiar RTS interactions, including unit selection, resource management, building placement, and defensive planning. However, instead of focusing on player-versus-player competition, the game is designed around a player-versus-environment survival experience.
+A* on the tile grid with octile distance heuristic and 8-directional movement. Returns an array of pixel-centre waypoints `[{x, y}, ...]`. Enemies step through `path[pathIndex]` each tick; the path is refreshed when exhausted or on repath.
 
-The main objective of the game is to defend a central structure, location, or mission-critical objective against repeated enemy invasions. Players must gather resources, expand and organize their base, train units, and construct defenses in order to survive increasingly difficult attacks. Success depends on balancing economic growth, military readiness, and defensive positioning over time.
+### Combat tick (`js/game/combat.js`)
 
-Because the game is intended to be statically hosted, the project is designed with deployment simplicity in mind. The game should run entirely on the client side, without requiring a dedicated game server for standard gameplay. This makes it easier to deploy, share, and maintain through static hosting platforms while also keeping the project lightweight and accessible.
+All called from `main.js → tick(dt)`:
 
-At a high level, the game aims to combine the satisfaction of classic RTS base-building with the tension of wave defense and survival gameplay. The intended player experience is one of constant preparation, strategic adaptation, and defensive problem-solving, where each invasion tests how well the player has built and protected their stronghold.
+| Function | What it does |
+|---|---|
+| `updateEnemies(dt)` | Move enemies along path, attack units/fortress with typed damage |
+| `updateUnits(dt)` | Patrol near spawn, chase+attack nearby enemies with melee or pierce attacks |
+| `updateTowers(dt)` | Find targets in range, fire projectiles for any ranged-defense building |
+| `updateProjectiles(dt)` | Move projectiles toward target, apply damage on arrival |
+| `updateResourceBuildings(dt)` | Tick gold generation for mines |
+| `updateProductionQueues(dt)` | Advance training timers, spawn finished units |
+| `updateResearch(dt)` | Advance active research, apply tech effects on completion |
+| `pruneDeadEntities()` | Remove `state === 'dead'` entities from arrays |
+| `rePathAllEnemies()` | Clear all enemy paths (called after map changes) |
 
-Basic Game Layout
-1. Core Game Structure
+### Renderer (`js/game/renderer.js`)
 
-The game is a statically hosted PvE real-time strategy defense game. The player gathers resources, places buildings, unlocks technologies, trains units, and defends a central objective against enemy invasions.
+Pure canvas drawing, called once per frame after `tick()`. Nothing in the renderer mutates game state. Call `renderer.setGhost(tx, ty, defId)` to show a placement preview; `setGhost(null, null, null)` to clear it.
 
-The overall structure is built around three major systems:
+### Selection UI (`js/ui/panels.js` + `js/main.js`)
 
-base building
-unit production and customization
-shared technology progression
+- Clicking most buildings updates the bottom info bar and available action buttons.
+- Clicking the fortress also opens a centered overlay panel with HP, ranged stats, remaining upgrades, and a repair button.
+- Fortress upgrades reuse the same per-instance `tower_upgrade` tech nodes that arrow towers use.
 
-The design should support easy content expansion, so the project will use a factory + decoder style architecture for game data. This allows units, buildings, equipment, and upgrades to be defined through data and loaded into the game with minimal hardcoded logic. In practice, this means most game objects can be changed, expanded, or rebalanced without rewriting the core game systems.
+---
 
-2. Architectural Direction
-2.1 Factory + Decoder Architecture
+## Adding a New Feature — Examples
 
-The game should be structured so that important content is defined through data objects rather than directly embedded in gameplay logic.
+### New resource building
 
-Purpose
-make units, items, and buildings easy to modify
-support future expansion without rewriting systems
-separate game content from game logic
-allow balancing through data changes
-Example usage
+1. Add to `BUILDING_DEFINITIONS` with `generates: { gold: X }` and `placeable: true`
+2. Add id to `BUILD_ORDER`
+3. Done — `updateResourceBuildings` handles any key in `generates` automatically
 
-A decoder reads structured data for:
+### New barracks unlock
 
-soldier equipment
-building definitions
-tower upgrades
-tech tree nodes
-production costs
-production times
+1. Add an equipment entry to `EQUIPMENT_DEFINITIONS`
+2. Add its id to `UNLOCK_DRAFT_POOL` if it should appear as a post-wave reward
+3. Add or adjust supporting tech bonuses in `TECH_TREE` if needed
+4. The units panel will expose it automatically once `state.unlockedEquipment` contains the id
 
-A factory then creates the actual in-game object from that data.
+### New tower type
 
-This means:
+1. Add a new building definition with `defId: 'tower2'`
+2. Give it ranged stats in `factory.js` by setting `inst.towerStats`
+3. Add its own upgrade path tech nodes to `TECH_TREE`
+4. In `renderer.js`, add a case for the new defId in `_drawBuildings`
+5. If it needs special UI, extend `panels.js`; otherwise `updateTowers()` already handles any building with `towerStats`
 
-a new weapon can be added by creating a new equipment definition
-a new tower upgrade can be added by extending tower upgrade data
-a new building branch can be added with minimal change to the building production logic
-3. Main Gameplay Systems
-3.1 Buildings
+### Fortress behavior
 
-Players can place buildings on the map to expand their economy and military options.
+- The fortress is created in `main.js` at map center and marked occupied like any other structure.
+- Its ranged profile is initialized in `factory.js` and decoded through the same `decodeTower()` path as towers.
+- Clicking it sets `state.selected` and opens the fortress overlay.
+- Repairing spends gold and restores the fortress to full HP.
 
-Initial building types
+---
 
-For the first version, the most important building category is military production buildings.
+## Deferred for Later Versions
 
-Barracks
+Planned future work:
 
-The Barracks is the base military production structure.
+- Multiple tower base types
+- Unique soldier classes with special abilities
+- Faction system
+- Advanced tower targeting modes (closest, strongest, first, last)
+- Branching building specializations beyond Barracks
+- Hero / commander units
+- Multiplayer
 
-Its role is:
+---
 
-produce basic infantry units
-act as the starting point for military branching
+## Original Design Document
 
-The Barracks can be upgraded into one of two specialized forms:
+The original design spec (game overview, architecture rationale, full data model description) is preserved below.
 
-Range → unlocks ranged unit production
-Stable → unlocks cavalry unit production
-Shared upgrade status
+<details>
+<summary>Click to expand original spec</summary>
 
-A key rule is that all Barracks-type buildings share the same upgrade status globally.
+### General Description
 
-This means:
+This project is a statically hosted real-time strategy survival game inspired by the control style and presentation of classic RTS titles such as Age of Empires. The game uses a similar top-down point of view and familiar RTS interactions, including resource management, building placement, and defensive planning. Instead of focusing on player-versus-player competition, the game is designed around a player-versus-environment survival experience.
 
-if the player upgrades Barracks into Range technology, all relevant Barracks in the game reflect that unlock state
-the upgrade is treated as a player-wide progression state, not an individual building state
-this prevents the player from having to manage each building separately for branch unlocks
+The main objective is to defend a central structure against repeated enemy invasions. Players must gather resources, expand their base, train units, and construct defenses in order to survive increasingly difficult attacks.
 
-This shared system should apply to the unlock layer, while individual buildings may still keep their own local production queues or hit points.
+### Architectural Direction
 
-3.2 Unit System
+**Factory + Decoder Architecture:** Game content is defined through data objects rather than directly embedded in gameplay logic. A decoder reads structured data such as soldier equipment, building definitions, tower upgrades, tech tree nodes, production costs, and production times. A factory creates the actual in-game object from that data. This means a new weapon, armor piece, or wave reward can be added primarily through data definitions.
 
-The soldier system is based on a single base soldier template that can be modified through equipment.
+### Core Systems
 
-Base soldier concept
+**Buildings:** The fortress is the central HQ, fires arrows automatically, supports per-instance tower upgrades, and can be repaired from its detail panel. Barracks train a single infantry line with configurable loadouts. Individual barracks keep their own local production queues, selected loadout, and HP.
 
-Instead of creating every soldier as a completely separate class, the game starts with a base soldier profile. That base soldier can then be equipped with unlocked items.
+**Unit System:** Single base soldier template modified through equipment. Weapons define melee or ranged behavior, shields add separate block values, and armor uses split melee/pierce protection. Final stats = base + equipment mods + tech bonuses.
 
-This creates flexible unit generation while keeping the unit structure simple.
+**Tech Trees:** Infantry, Ranged, Defense, and Tower categories. Tower-upgrade tech is applied per selected ranged-defense building rather than globally.
 
-Equipment-based soldier creation
+**Progression Model:** Research provides global combat bonuses while completed waves present a three-choice unlock draft that expands the barracks equipment pool over time.
 
-The player unlocks equipment through progression. Equipment can then be used to define what kind of soldier is produced.
-
-Equipment may affect:
-
-attack
-defense
-range
-movement
-special behavior
-production cost
-production time
-
-The final soldier result is calculated from:
-
-base soldier stats
-equipped items
-unit branch modifiers
-unlocked upgrades
-Cost and production calculation
-
-The game should use a sum-based calculation model.
-
-For each produced unit:
-
-Final Unit Stats
-= Base Soldier Stats
-
-Equipment Stat Bonuses
-Tech Bonuses
-
-Final Production Cost
-= Base Soldier Cost
-
-Equipment Cost Additions
-Branch/Upgrade Adjustments
-
-Final Production Time
-= Base Soldier Time
-
-Equipment Time Additions
-Branch/Upgrade Adjustments
-
-This structure makes balancing easier and supports future content scaling.
-
-4. Military Tech Tree Layout
-
-The game includes four main military-related progression branches:
-
-Tower Tech Tree
-Infantry Tech Tree
-Range Tech Tree
-Cavalry Tech Tree
-
-These represent player-wide progression systems.
-
-4.1 Infantry Tech Tree
-
-The Infantry Tech Tree improves the player’s melee ground units.
-
-Possible functions:
-
-unlock new infantry equipment
-improve infantry health, damage, armor, or speed
-reduce infantry training cost or production time
-unlock stronger infantry variants later
-
-This is the default and earliest available troop branch.
-
-4.2 Range Tech Tree
-
-The Range Tech Tree unlocks and improves ranged soldiers.
-
-Requirements:
-
-Range branch must be unlocked from Barracks progression
-
-Possible functions:
-
-unlock bows, crossbows, or other ranged weapons
-improve attack range or attack speed
-reduce ranged production time
-improve projectile-related stats
-4.3 Cavalry Tech Tree
-
-The Cavalry Tech Tree unlocks and improves mounted units.
-
-Requirements:
-
-Stable branch must be unlocked from Barracks progression
-
-Possible functions:
-
-unlock cavalry equipment or mounts
-improve movement speed and charge effectiveness
-increase cavalry durability
-reduce cavalry production cost or time
-4.4 Tower Tech Tree
-
-The Tower Tech Tree handles defensive tower progression.
-
-For version one, the system will remain intentionally simple.
-
-Version one tower model
-
-There is only one base tower type.
-
-This tower can be upgraded through three separate upgrade paths:
-
-Attack Speed
-Attack Damage
-Attack Count
-Path definitions
-
-Attack Speed Path
-
-increases rate of fire
-tower attacks more often
-
-Attack Damage Path
-
-increases damage per projectile
-tower becomes stronger against tougher enemies
-
-Attack Count Path
-
-increases the number of arrows/projectiles fired per attack cycle
-useful for crowd control or wave defense
-
-These tower upgrades should be treated as part of the Tower Tech Tree and can either be:
-
-global tower unlocks, or
-per-tower upgrade choices
-
-For a simple first version, either approach is valid, but per-tower upgrade paths may create more tactical depth, while global upgrades are easier to implement.
-
-5. Progression Model
-
-The game progression should combine global unlocks and individual object behavior.
-
-Global progression
-
-Shared across the player:
-
-technology tree unlocks
-Barracks branch unlock state
-available soldier equipment
-tower upgrade availability
-Local object behavior
-
-Unique to each object:
-
-building placement
-health
-unit training queue
-tower target selection
-tower chosen upgrade path, if pathing is per structure
-
-This split keeps the progression system understandable:
-the player unlocks options globally, then uses those options locally on the battlefield.
-
-6. Recommended Data Model
-
-To support the factory + decoder architecture, the game content can be divided into these main definition types:
-
-BuildingDefinition
-
-Contains:
-
-building id
-display name
-cost
-health
-size
-available actions
-upgrade options
-production capabilities
-SoldierDefinition
-
-Contains:
-
-base unit id
-base stats
-base cost
-base production time
-allowed equipment slots
-EquipmentDefinition
-
-Contains:
-
-equipment id
-equipment type
-stat modifiers
-cost modifiers
-time modifiers
-unlock requirements
-TechNodeDefinition
-
-Contains:
-
-tech id
-tech tree category
-prerequisites
-effect type
-effect value
-TowerDefinition
-
-Contains:
-
-base tower stats
-available upgrade branches
-targeting behavior
-
-This data-first structure makes the layout easier to maintain.
-
-7. Version One Scope
-
-To keep the first version focused, the game can be limited to the following:
-
-Included
-base building placement
-Barracks production building
-Barracks branching into Range or Stable unlock
-shared Barracks upgrade progression
-one base soldier system with equipment-based stat calculation
-infantry, range, cavalry, and tower tech trees
-one tower type
-tower upgrades in three paths:
-attack speed
-attack damage
-attack count
-unit production cost/time based on equipment sum calculation
-PvE defense gameplay loop
-Deferred for later versions
-multiple tower base types
-unique soldier classes with special abilities
-faction system
-advanced tower targeting modes
-branching building specializations beyond Barracks
-hero or commander units
-multiplayer or server-hosted systems
-8. Simple System Relationship Summary
-
-A very simple way to describe the game flow is:
-
-Player unlocks tech
-→ Tech unlocks equipment/building branches/upgrades
-→ Buildings produce units or defenses
-→ Units are generated from a base soldier + equipment + tech modifiers
-→ Towers and armies defend against PvE invasions
+</details>
